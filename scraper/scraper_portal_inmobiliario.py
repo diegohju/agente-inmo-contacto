@@ -28,9 +28,16 @@ BUSCAR_EMAILS   = os.getenv("BUSCAR_EMAILS", "true").lower() == "true"
 PRECIO_MINIMO   = int(os.getenv("PRECIO_MINIMO", "300000000")) # 300 Millones CLP
 # URL base filtrando propiedades en venta sobre 8000 UF (~300M CLP) para optimizar la búsqueda
 BASE_URL        = "https://www.portalinmobiliario.com/venta/_Desde_8000-UF"
-SUPABASE_URL    = os.environ["SUPABASE_URL"]
-SUPABASE_KEY    = os.environ["SUPABASE_SERVICE_KEY"]   # service_role key (en GitHub Secrets)
+SUPABASE_URL    = os.getenv("SUPABASE_URL")
+SUPABASE_KEY    = os.getenv("SUPABASE_SERVICE_KEY")   # service_role key (en GitHub Secrets)
 # ──────────────────────────────────────────────────────────
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("\n❌ ERROR: Faltan las variables de entorno de Supabase.")
+    print("Asegúrate de configurar 'SUPABASE_URL' y 'SUPABASE_SERVICE_KEY' en los Secrets de GitHub.")
+    print(f"SUPABASE_URL detectada: {'Sí' if SUPABASE_URL else 'No'}")
+    print(f"SUPABASE_SERVICE_KEY detectada: {'Sí' if SUPABASE_KEY else 'No'}\n")
+    exit(9)
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
