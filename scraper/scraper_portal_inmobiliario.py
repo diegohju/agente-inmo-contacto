@@ -25,9 +25,7 @@ from supabase import create_client, Client
 MAX_PAGINAS     = int(os.getenv("MAX_PAGINAS", "10"))
 DELAY_PAGINA    = int(os.getenv("DELAY_PAGINA", "3"))
 BUSCAR_EMAILS   = os.getenv("BUSCAR_EMAILS", "true").lower() == "true"
-PRECIO_MINIMO   = int(os.getenv("PRECIO_MINIMO", "300000000")) # 300 Millones CLP
-# URL base filtrando propiedades en venta sobre 8000 UF (~300M CLP) para optimizar la búsqueda
-BASE_URL        = "https://www.portalinmobiliario.com/venta/_Desde_8000-UF"
+BASE_URL        = "https://www.portalinmobiliario.com/venta"  # URL base sin filtros
 SUPABASE_URL    = os.getenv("SUPABASE_URL")
 SUPABASE_KEY    = os.getenv("SUPABASE_SERVICE_KEY")   # service_role key (en GitHub Secrets)
 # ──────────────────────────────────────────────────────────
@@ -81,28 +79,33 @@ def extraer_email(texto: str) -> str | None:
     return None
 
 
-def extraer_precio_clp(soup) -> int:
-    """Extrae el precio del aviso y lo convierte a CLP si está en UF."""
+def extraer_precio(soup) -> tuple[int, str]:
+    """
+    Extrae el precio del aviso.
+    Retorna (precio_clp, precio_texto) donde precio_clp es 0 si no se encuentra.
+    Para UF usa conversión referencial de $38.000 CLP por UF.
+    """
+    # Selectores comunes de Portal Inmobiliario (MercadoLibre engine)
     price_elem = soup.select_one('.ui-pdp-price__part .andes-money-amount__fraction')
     currency_elem = soup.select_one('.ui-pdp-price__part .andes-money-amount__currency-symbol')
-    
+
     if not price_elem or not currency_elem:
         price_elem = soup.select_one('[class*="price"] [class*="fraction"]')
         currency_elem = soup.select_one('[class*="price"] [class*="symbol"]')
-        
+
     if price_elem and currency_elem:
         try:
             val_str = price_elem.get_text(strip=True).replace('.', '').replace(',', '')
             val = int(val_str)
-            currency = currency_elem.get_text(strip=True)
+            currency = currency_elem.get_text(strip=True).strip()
+            precio_texto = f"{currency} {price_elem.get_text(strip=True)}"
             if 'UF' in currency.upper():
-                # Asumimos UF referencial de $38.000 CLP para la validación
-                return val * 38000
+                return val * 38000, precio_texto   # conversión referencial
             elif '$' in currency:
-                return val
+                return val, precio_texto
         except Exception:
             pass
-    return 0
+    return 0, ""
 
 
 def normalizar_nombre(nombre: str) -> str:
@@ -177,7 +180,7 @@ KEYWORDS_EMPRESA = [
 
 
 def scrape_aviso(driver: webdriver.Chrome, url: str) -> dict | None:
-    """Extrae datos de un aviso. Retorna None si no cumple el precio o no es empresa."""
+    """Extrae datos de un aviso. Retorna None si el publicador no es empresa."""
     try:
         driver.get(url)
         WebDriverWait(driver, 8).until(
@@ -185,11 +188,8 @@ def scrape_aviso(driver: webdriver.Chrome, url: str) -> dict | None:
         )
         soup = BeautifulSoup(driver.page_source, "html.parser")
 
-        # ── NUEVO: Filtrar por precio ────────────────────
-        precio_clp = extraer_precio_clp(soup)
-        if precio_clp < PRECIO_MINIMO:
-            # Si el precio es menor al configurado (300M CLP), ignoramos el aviso
-            return None
+        # Extraer precio (sin filtrar — se guarda en Supabase para filtrar después)
+        precio_clp, precio_texto = extraer_precio(soup)
 
         # Detectar publicador
         publicador = ""
@@ -235,6 +235,8 @@ def scrape_aviso(driver: webdriver.Chrome, url: str) -> dict | None:
             "tipo": tipo,
             "region": region,
             "url": url,
+            "precio_clp": precio_clp,
+            "precio_texto": precio_texto,
         }
     except Exception:
         return None
@@ -277,6 +279,8 @@ def guardar_inmobiliarias(consolidado: dict):
             "email_fuente": data.get("email_fuente") or "no encontrado",
             "total_avisos": data.get("total_avisos", 1),
             "regiones_presentes": ", ".join(data.get("regiones", set())),
+            "precio_max_clp": data.get("precio_max_clp", 0),
+            "precio_texto": data.get("precio_texto", ""),
             "fecha_extraccion": date.today().isoformat(),
         })
 
@@ -308,12 +312,12 @@ def main():
         for pag in range(1, MAX_PAGINAS + 1):
             print(f"\n  📄 Página {pag}/{MAX_PAGINAS}")
             
-            # Construcción de la URL de paginación de MercadoLibre/PortalInmobiliario con filtro
+            # Construcción de la URL de paginación
             if pag == 1:
-                url_pagina = "https://www.portalinmobiliario.com/venta/_PriceRange_300000000CLP-ID"
+                url_pagina = BASE_URL
             else:
                 desde = (pag - 1) * 50 + 1
-                url_pagina = f"https://www.portalinmobiliario.com/venta/_Desde_{desde}_PriceRange_300000000CLP-ID"
+                url_pagina = f"{BASE_URL}_Desde_{desde}"
                 
             driver.get(url_pagina)
             time.sleep(DELAY_PAGINA)
@@ -353,10 +357,16 @@ def main():
                     "total_avisos": 0,
                     "regiones": set(),
                     "email_fuente": "aviso" if item["email"] else None,
+                    "precio_max_clp": 0,
+                    "precio_texto": "",
                 }
             consolidado[nombre]["total_avisos"] += 1
             if item["region"]:
                 consolidado[nombre]["regiones"].add(item["region"])
+            # Guardar el precio máximo visto para esta inmobiliaria
+            if item.get("precio_clp", 0) > consolidado[nombre]["precio_max_clp"]:
+                consolidado[nombre]["precio_max_clp"] = item["precio_clp"]
+                consolidado[nombre]["precio_texto"] = item.get("precio_texto", "")
             # Si aún no tiene email, toma el del aviso actual
             if item["email"] and not consolidado[nombre]["email_fuente"]:
                 consolidado[nombre]["email"] = item["email"]
