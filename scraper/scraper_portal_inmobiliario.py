@@ -307,7 +307,15 @@ def main():
         print(f"\n📋 FASE 1: Scraping de {MAX_PAGINAS} páginas de listados")
         for pag in range(1, MAX_PAGINAS + 1):
             print(f"\n  📄 Página {pag}/{MAX_PAGINAS}")
-            driver.get(f"{BASE_URL}?pagina={pag}")
+            
+            # Construcción de la URL de paginación de MercadoLibre/PortalInmobiliario con filtro
+            if pag == 1:
+                url_pagina = "https://www.portalinmobiliario.com/venta/_PriceRange_300000000CLP-ID"
+            else:
+                desde = (pag - 1) * 50 + 1
+                url_pagina = f"https://www.portalinmobiliario.com/venta/_Desde_{desde}_PriceRange_300000000CLP-ID"
+                
+            driver.get(url_pagina)
             time.sleep(DELAY_PAGINA)
             soup = BeautifulSoup(driver.page_source, "html.parser")
 
