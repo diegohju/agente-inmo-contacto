@@ -25,7 +25,9 @@ from supabase import create_client, Client
 MAX_PAGINAS     = int(os.getenv("MAX_PAGINAS", "10"))
 DELAY_PAGINA    = int(os.getenv("DELAY_PAGINA", "3"))
 BUSCAR_EMAILS   = os.getenv("BUSCAR_EMAILS", "true").lower() == "true"
-BASE_URL        = "https://www.portalinmobiliario.com/venta"
+PRECIO_MINIMO   = int(os.getenv("PRECIO_MINIMO", "300000000")) # 300 Millones CLP
+# URL base filtrando propiedades en venta sobre 8000 UF (~300M CLP) para optimizar la búsqueda
+BASE_URL        = "https://www.portalinmobiliario.com/venta/_Desde_8000-UF"
 SUPABASE_URL    = os.environ["SUPABASE_URL"]
 SUPABASE_KEY    = os.environ["SUPABASE_SERVICE_KEY"]   # service_role key (en GitHub Secrets)
 # ──────────────────────────────────────────────────────────
@@ -57,7 +59,7 @@ def init_driver() -> webdriver.Chrome:
         )
 
 
-# ── UTILIDADES DE EMAIL ───────────────────────────────────
+# ── UTILIDADES DE EMAIL Y PRECIO ──────────────────────────
 PATRON_EMAIL = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
 IGNORAR_EMAIL = ["google", "youtube", "gmail.com", "example", "test",
                  "portalinmobiliario", "yapo", "toctoc"]
@@ -70,6 +72,30 @@ def extraer_email(texto: str) -> str | None:
         if not any(x in e.lower() for x in IGNORAR_EMAIL):
             return e.lower()
     return None
+
+
+def extraer_precio_clp(soup) -> int:
+    """Extrae el precio del aviso y lo convierte a CLP si está en UF."""
+    price_elem = soup.select_one('.ui-pdp-price__part .andes-money-amount__fraction')
+    currency_elem = soup.select_one('.ui-pdp-price__part .andes-money-amount__currency-symbol')
+    
+    if not price_elem or not currency_elem:
+        price_elem = soup.select_one('[class*="price"] [class*="fraction"]')
+        currency_elem = soup.select_one('[class*="price"] [class*="symbol"]')
+        
+    if price_elem and currency_elem:
+        try:
+            val_str = price_elem.get_text(strip=True).replace('.', '').replace(',', '')
+            val = int(val_str)
+            currency = currency_elem.get_text(strip=True)
+            if 'UF' in currency.upper():
+                # Asumimos UF referencial de $38.000 CLP para la validación
+                return val * 38000
+            elif '$' in currency:
+                return val
+        except Exception:
+            pass
+    return 0
 
 
 def normalizar_nombre(nombre: str) -> str:
@@ -144,13 +170,19 @@ KEYWORDS_EMPRESA = [
 
 
 def scrape_aviso(driver: webdriver.Chrome, url: str) -> dict | None:
-    """Extrae datos de un aviso. Retorna None si el publicador no es empresa."""
+    """Extrae datos de un aviso. Retorna None si no cumple el precio o no es empresa."""
     try:
         driver.get(url)
         WebDriverWait(driver, 8).until(
             EC.presence_of_element_located((By.TAG_NAME, "body"))
         )
         soup = BeautifulSoup(driver.page_source, "html.parser")
+
+        # ── NUEVO: Filtrar por precio ────────────────────
+        precio_clp = extraer_precio_clp(soup)
+        if precio_clp < PRECIO_MINIMO:
+            # Si el precio es menor al configurado (300M CLP), ignoramos el aviso
+            return None
 
         # Detectar publicador
         publicador = ""
