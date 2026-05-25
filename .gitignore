@@ -1,0 +1,19 @@
+# Archivos sensibles
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Outputs
+*.xlsx
+*.csv
+prospectos_*.xlsx
+
+# macOS
+.DS_Store
