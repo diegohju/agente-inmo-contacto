@@ -15,6 +15,9 @@ on:
         required: false
         default: "true"
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # Evita la advertencia de Node.js 20
+
 jobs:
   scraper:
     name: Ejecutar scraper
@@ -34,28 +37,32 @@ jobs:
           cache: "pip"
           cache-dependency-path: scraper/requirements.txt
 
-      # ── 3. Google Chrome ─────────────────────────────────
+      # ── 3. Verificar que los Secrets están cargados ──────
+      - name: 🔑 Verificar Secrets de Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ]; then
+            echo "❌ ERROR: El Secret 'SUPABASE_URL' no está configurado en GitHub."
+            echo "Ve a: Settings → Secrets and variables → Actions → New repository secret"
+            exit 1
+          else
+            echo "✅ SUPABASE_URL cargada correctamente (${#SUPABASE_URL} caracteres)"
+          fi
+          if [ -z "$SUPABASE_SERVICE_KEY" ]; then
+            echo "❌ ERROR: El Secret 'SUPABASE_SERVICE_KEY' no está configurado en GitHub."
+            exit 1
+          else
+            echo "✅ SUPABASE_SERVICE_KEY cargada correctamente (${#SUPABASE_SERVICE_KEY} caracteres)"
+          fi
+
+      # ── 4. Google Chrome ─────────────────────────────────
       - name: 🌐 Instalar Google Chrome
         run: |
-          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-          sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list'
           sudo apt-get update -qq
           sudo apt-get install -y google-chrome-stable
           google-chrome --version
-
-      # ── 4. ChromeDriver coincidente ──────────────────────
-      - name: 🔧 Instalar ChromeDriver
-        run: |
-          CHROME_VER=$(google-chrome --version | awk '{print $3}' | cut -d. -f1)
-          DRIVER_URL="https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VER}.0.0.0/linux64/chromedriver-linux64.zip"
-          wget -q "$DRIVER_URL" -O chromedriver.zip || true
-          # Fallback: webdriver-manager se encarga si falla la descarga directa
-          if [ -f chromedriver.zip ]; then
-            unzip -q chromedriver.zip
-            sudo mv chromedriver-linux64/chromedriver /usr/bin/chromedriver
-            sudo chmod +x /usr/bin/chromedriver
-          fi
-          chromedriver --version || echo "ChromeDriver gestionado por webdriver-manager"
 
       # ── 5. Dependencias Python ───────────────────────────
       - name: 📦 Instalar dependencias
