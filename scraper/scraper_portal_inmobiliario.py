@@ -14,11 +14,9 @@ from datetime import datetime, date
 import requests
 from bs4 import BeautifulSoup
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
 from supabase import create_client, Client
 
 # ── CONFIGURACIÓN ──────────────────────────────────────────
@@ -62,10 +60,10 @@ def init_driver() -> webdriver.Chrome:
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
 
-    # webdriver-manager funciona tanto en CI como en local
-    driver = webdriver.Chrome(
-        service=Service(ChromeDriverManager().install()), options=options
-    )
+    # Selenium 4.6+ incluye selenium-manager que descarga el chromedriver correcto
+    # automáticamente — no necesitamos webdriver-manager
+    driver = webdriver.Chrome(options=options)
+
     # Ocultar webdriver flag vía CDP
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
         "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
