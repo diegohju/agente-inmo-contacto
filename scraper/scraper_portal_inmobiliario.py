@@ -43,25 +43,34 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # ── DRIVER ────────────────────────────────────────────────
 def init_driver() -> webdriver.Chrome:
     options = webdriver.ChromeOptions()
-    options.add_argument("--headless")
+
+    # Modo headless compatible con detección anti-bot
+    options.add_argument("--headless=new")  # nuevo headless mode (Chrome 112+)
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1280,900")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--start-maximized")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-infobars")
+    options.add_argument("--lang=es-CL,es")
     options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "user-agent=Mozilla/5.0 (X11; Linux x86_64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     )
-    try:
-        # En CI (GitHub Actions) Chrome está instalado globalmente
-        options.binary_location = "/usr/bin/google-chrome"
-        service = Service("/usr/bin/chromedriver")
-        return webdriver.Chrome(service=service, options=options)
-    except Exception:
-        # Fallback: webdriver-manager (local)
-        return webdriver.Chrome(
-            service=Service(ChromeDriverManager().install()), options=options
-        )
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
+
+    # webdriver-manager funciona tanto en CI como en local
+    driver = webdriver.Chrome(
+        service=Service(ChromeDriverManager().install()), options=options
+    )
+    # Ocultar webdriver flag vía CDP
+    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+        "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+    })
+    return driver
 
 
 # ── UTILIDADES DE EMAIL Y PRECIO ──────────────────────────
@@ -196,8 +205,11 @@ def scrape_aviso(driver: webdriver.Chrome, url: str) -> dict | None:
     """Extrae datos de un aviso. Retorna None si el publicador no es empresa."""
     try:
         driver.get(url)
-        # Esperar a que la página del aviso se cargue realmente (superando el JS challenge/redirección)
-        esperar_carga_pagina(driver, ['.ui-pdp-title', '.andes-money-amount', '.ui-pdp-price__part'])
+        # Esperar que pase el JS challenge y cargue la página real (hasta 15s)
+        cargado = esperar_carga_pagina(driver, ['.ui-pdp-title', '.andes-money-amount', '.ui-pdp-price__part'])
+        if not cargado:
+            print(f"      [!] Timeout 15s — página no cargó. URL final: {driver.current_url[:80]}")
+
         soup = BeautifulSoup(driver.page_source, "html.parser")
 
         # Extraer precio (sin filtrar — se guarda en Supabase para filtrar después)
@@ -237,6 +249,7 @@ def scrape_aviso(driver: webdriver.Chrome, url: str) -> dict | None:
                     break
 
         if not publicador:
+            print(f"      [!] Sin publicador. Título página: {driver.title[:60]}")
             return None
 
         # Filtrar personas físicas
@@ -245,6 +258,7 @@ def scrape_aviso(driver: webdriver.Chrome, url: str) -> dict | None:
             or len(publicador.split()) >= 3
         )
         if not es_empresa:
+            print(f"      [!] Publicador descartado (persona): {publicador}")
             return None
 
         email = extraer_email(soup.get_text())
@@ -272,7 +286,8 @@ def scrape_aviso(driver: webdriver.Chrome, url: str) -> dict | None:
             "precio_clp": precio_clp,
             "precio_texto": precio_texto,
         }
-    except Exception:
+    except Exception as e:
+        print(f"      [!] Excepción en scrape_aviso: {e}")
         return None
 
 
@@ -354,8 +369,11 @@ def main():
                 url_pagina = f"{BASE_URL}_Desde_{desde}"
                 
             driver.get(url_pagina)
-            # Esperar a que la página de listados cargue superando posibles retos de bot
-            esperar_carga_pagina(driver, ['.ui-search-layout', '.ui-search-result', 'a[href*="/MLC-"]', 'a[href*="/propiedades/"]'])
+            # Esperar a que la página de listados cargue (hasta 15s)
+            cargado = esperar_carga_pagina(driver, ['a[href*="/MLC-"]', '.ui-search-layout', '.ui-search-result'])
+            print(f"  URL actual: {driver.current_url[:100]}")
+            print(f"  Título: {driver.title[:80]}")
+            print(f"  Cargó contenido: {'Sí' if cargado else 'No (timeout 15s)'}")
             soup = BeautifulSoup(driver.page_source, "html.parser")
 
             links: list[str] = []
@@ -370,13 +388,22 @@ def main():
                         links.append(url)
                         urls_vistas.add(url)
 
-            print(f"  → {len(links)} avisos encontrados")
+            print(f"  → {len(links)} links encontrados")
+            if links:
+                print(f"  Primeros 3 links: {links[:3]}")
 
+            avisos_pagina = 0
             for url in links[:20]:
+                print(f"    Scrapeando: {url[:90]}...")
                 r = scrape_aviso(driver, url)
                 if r:
+                    print(f"    ✓ Publicador: {r['publicador']}")
                     avisos.append(r)
+                    avisos_pagina += 1
+                else:
+                    print(f"    ✗ Sin publicador válido")
                 time.sleep(random.uniform(1, 2))
+            print(f"  → {avisos_pagina} avisos de empresa en esta página")
 
         print(f"\n✅ Fase 1 completa — {len(avisos)} avisos de inmobiliarias")
 
