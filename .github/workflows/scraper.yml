@@ -60,43 +60,31 @@ jobs:
       # ── 4. Google Chrome + ChromeDriver ─────────────────
       - name: 🌐 Instalar Google Chrome y ChromeDriver
         run: |
-          # Instalar Chrome
           sudo apt-get update -qq
           sudo apt-get install -y google-chrome-stable
-          CHROME_VER=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+\.\d+')
-          echo "Chrome version: $CHROME_VER"
+          CHROME_VER=$(google-chrome --version)
+          echo "Chrome instalado: $CHROME_VER"
 
-          # Instalar ChromeDriver que coincida con Chrome instalado
-          # selenium-manager (incluido en Selenium 4.6+) lo descarga automáticamente
-          # pero también instalamos desde sistema como fallback
-          CHROME_MAJOR=$(echo $CHROME_VER | cut -d. -f1)
-          echo "Chrome major: $CHROME_MAJOR"
+          # Instalar chromedriver que coincida con Chrome
+          # Usamos el script oficial de Google para Chrome 115+
+          CHROME_MAJOR=$(google-chrome --version | grep -oP '\d+' | head -1)
+          echo "Chrome major version: $CHROME_MAJOR"
 
-          # Descargar chromedriver desde el nuevo endpoint de Google (Chrome 115+)
-          DRIVER_URL=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json" \
-            | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-major = '$CHROME_MAJOR'
-for v in reversed(data['versions']):
-    if v['version'].split('.')[0] == major:
-        for d in v.get('downloads', {}).get('chromedriver', []):
-            if d['platform'] == 'linux64':
-                print(d['url'])
-                break
-        break
-" 2>/dev/null || echo "")
+          # Descargar la versión correcta de chromedriver
+          DRIVER_JSON=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json")
+          DRIVER_URL=$(echo "$DRIVER_JSON" | grep -o '"url": *"[^"]*linux64[^"]*chromedriver[^"]*"' | grep -o 'https://[^"]*' | head -1)
 
           if [ -n "$DRIVER_URL" ]; then
-            echo "Descargando chromedriver desde: $DRIVER_URL"
+            echo "Descargando: $DRIVER_URL"
             wget -q "$DRIVER_URL" -O /tmp/chromedriver.zip
-            unzip -q /tmp/chromedriver.zip -d /tmp/chromedriver_extracted/
-            sudo mv /tmp/chromedriver_extracted/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver
+            unzip -q /tmp/chromedriver.zip -d /tmp/cd/
+            sudo cp /tmp/cd/*/chromedriver /usr/local/bin/chromedriver
             sudo chmod +x /usr/local/bin/chromedriver
-            chromedriver --version
+            echo "ChromeDriver: $(chromedriver --version)"
           else
-            echo "No se pudo descargar chromedriver — selenium-manager lo gestionará"
+            echo "Usando selenium-manager para gestionar chromedriver"
           fi
+
 
       # ── 5. Dependencias Python ───────────────────────────
       - name: 📦 Instalar dependencias
