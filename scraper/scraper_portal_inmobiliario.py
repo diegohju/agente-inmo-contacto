@@ -188,13 +188,59 @@ KEYWORDS_EMPRESA = [
 ]
 
 
-def esperar_carga_pagina(driver: webdriver.Chrome, selectores: list[str], max_espera: int = 15) -> bool:
-    """Espera a que al menos uno de los selectores esté presente en la página, manejando redirecciones."""
-    for _ in range(max_espera):
+def _es_pagina_challenge(driver: webdriver.Chrome) -> bool:
+    """Detecta si estamos en la página del bot challenge de MercadoLibre."""
+    try:
+        return bool(driver.find_elements("css selector", ".micro-landing-container, #continue-button"))
+    except Exception:
+        return False
+
+
+def _bypass_challenge(driver: webdriver.Chrome):
+    """
+    Ejecuta el bypass del challenge: llama a navigateToContinue() que
+    establece la cookie _bm_skipml y redirige a la URL real.
+    """
+    try:
+        # Opción 1: Ejecutar directamente la función de bypass si está disponible
+        driver.execute_script("if(typeof navigateToContinue === 'function') navigateToContinue();")
+        time.sleep(2)
+    except Exception:
+        pass
+    try:
+        # Opción 2: Establecer la cookie bypass manualmente y redirigir
+        driver.execute_script("""
+            var e = new Date(Date.now()+300000);
+            document.cookie = '_bm_skipml=true; Path=/; domain=portalinmobiliario.com; expires=' + e.toUTCString();
+        """)
+        # Extraer la URL de destino del canonical link o del script
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        canonical = soup.find("link", rel="canonical")
+        if canonical and canonical.get("href"):
+            dest = canonical["href"]
+            print(f"      [bypass] Redirigiendo a URL canónica: {dest[:80]}")
+            driver.get(dest)
+            time.sleep(3)
+    except Exception as e:
+        print(f"      [bypass] Error: {e}")
+
+
+def esperar_carga_pagina(driver: webdriver.Chrome, selectores: list[str], max_espera: int = 45) -> bool:
+    """
+    Espera hasta max_espera segundos a que el contenido real cargue.
+    Detecta y resuelve automáticamente el bot challenge de MercadoLibre.
+    """
+    challenge_intentado = False
+    for i in range(max_espera):
         try:
             soup = BeautifulSoup(driver.page_source, "html.parser")
             if any(soup.select_one(sel) for sel in selectores):
                 return True
+            # Si estamos en el challenge y aún no lo hemos intentado, bypass
+            if not challenge_intentado and _es_pagina_challenge(driver):
+                print(f"      [challenge] Detectado bot challenge en segundo {i}, intentando bypass...")
+                _bypass_challenge(driver)
+                challenge_intentado = True
         except Exception:
             pass
         time.sleep(1)
