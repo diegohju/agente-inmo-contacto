@@ -179,13 +179,25 @@ KEYWORDS_EMPRESA = [
 ]
 
 
+def esperar_carga_pagina(driver: webdriver.Chrome, selectores: list[str], max_espera: int = 15) -> bool:
+    """Espera a que al menos uno de los selectores esté presente en la página, manejando redirecciones."""
+    for _ in range(max_espera):
+        try:
+            soup = BeautifulSoup(driver.page_source, "html.parser")
+            if any(soup.select_one(sel) for sel in selectores):
+                return True
+        except Exception:
+            pass
+        time.sleep(1)
+    return False
+
+
 def scrape_aviso(driver: webdriver.Chrome, url: str) -> dict | None:
     """Extrae datos de un aviso. Retorna None si el publicador no es empresa."""
     try:
         driver.get(url)
-        WebDriverWait(driver, 8).until(
-            EC.presence_of_element_located((By.TAG_NAME, "body"))
-        )
+        # Esperar a que la página del aviso se cargue realmente (superando el JS challenge/redirección)
+        esperar_carga_pagina(driver, ['.ui-pdp-title', '.andes-money-amount', '.ui-pdp-price__part'])
         soup = BeautifulSoup(driver.page_source, "html.parser")
 
         # Extraer precio (sin filtrar — se guarda en Supabase para filtrar después)
@@ -193,14 +205,36 @@ def scrape_aviso(driver: webdriver.Chrome, url: str) -> dict | None:
 
         # Detectar publicador
         publicador = ""
+        # 1. Selectores específicos de marca/inmobiliaria
         for sel in [
-            ".advertiser-name", ".seller-name", '[class*="advertiser"]',
-            '[class*="seller"]', '[class*="publisher"]', '[class*="agency"]',
+            ".ui-vip-profile-info__info-link",
+            ".ui-vip-profile-info",
+            ".ui-vip-profile-info__info-container",
+            ".advertiser-name",
+            ".seller-name",
+            '[class*="seller-name"]',
+            '[class*="agency-name"]',
+            '[class*="advertiser-name"]'
         ]:
             elem = soup.select_one(sel)
             if elem:
-                publicador = elem.get_text(strip=True)
-                break
+                txt = elem.get_text(strip=True)
+                if txt and not any(x in txt.lower() for x in ["identidad verificada", "verificado", "información de", "código de"]):
+                    publicador = txt
+                    break
+
+        # 2. Fallback con clases generales
+        if not publicador:
+            for sel in ['[class*="advertiser"]', '[class*="seller"]', '[class*="publisher"]', '[class*="agency"]']:
+                for elem in soup.select(sel):
+                    txt = elem.get_text(strip=True)
+                    if txt and len(txt) < 80 and not any(x in txt.lower() for x in [
+                        "identidad verificada", "verificado", "información", "reclamar", "opiniones", "ver más"
+                    ]):
+                        publicador = txt
+                        break
+                if publicador:
+                    break
 
         if not publicador:
             return None
@@ -320,13 +354,14 @@ def main():
                 url_pagina = f"{BASE_URL}_Desde_{desde}"
                 
             driver.get(url_pagina)
-            time.sleep(DELAY_PAGINA)
+            # Esperar a que la página de listados cargue superando posibles retos de bot
+            esperar_carga_pagina(driver, ['.ui-search-layout', '.ui-search-result', 'a[href*="/MLC-"]', 'a[href*="/propiedades/"]'])
             soup = BeautifulSoup(driver.page_source, "html.parser")
 
             links: list[str] = []
             for a in soup.find_all("a", href=True):
                 h = a["href"]
-                if any(x in h for x in ["/MLA", "/MLU", "/propiedades/"]):
+                if any(x in h for x in ["/MLC-", "/propiedades/"]):
                     url = (
                         h if h.startswith("http")
                         else f"https://www.portalinmobiliario.com{h}"
