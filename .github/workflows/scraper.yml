@@ -57,33 +57,15 @@ jobs:
             echo "✅ SUPABASE_SERVICE_KEY cargada correctamente (${#SUPABASE_SERVICE_KEY} caracteres)"
           fi
 
-      # ── 4. Google Chrome + ChromeDriver ─────────────────
-      - name: 🌐 Instalar Google Chrome y ChromeDriver
+      # ── 4. Google Chrome ─────────────────────────────────
+      - name: 🌐 Instalar Google Chrome
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y google-chrome-stable
-          CHROME_VER=$(google-chrome --version)
-          echo "Chrome instalado: $CHROME_VER"
-
-          # Instalar chromedriver que coincida con Chrome
-          # Usamos el script oficial de Google para Chrome 115+
-          CHROME_MAJOR=$(google-chrome --version | grep -oP '\d+' | head -1)
-          echo "Chrome major version: $CHROME_MAJOR"
-
-          # Descargar la versión correcta de chromedriver
-          DRIVER_JSON=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json")
-          DRIVER_URL=$(echo "$DRIVER_JSON" | grep -o '"url": *"[^"]*linux64[^"]*chromedriver[^"]*"' | grep -o 'https://[^"]*' | head -1)
-
-          if [ -n "$DRIVER_URL" ]; then
-            echo "Descargando: $DRIVER_URL"
-            wget -q "$DRIVER_URL" -O /tmp/chromedriver.zip
-            unzip -q /tmp/chromedriver.zip -d /tmp/cd/
-            sudo cp /tmp/cd/*/chromedriver /usr/local/bin/chromedriver
-            sudo chmod +x /usr/local/bin/chromedriver
-            echo "ChromeDriver: $(chromedriver --version)"
-          else
-            echo "Usando selenium-manager para gestionar chromedriver"
-          fi
+          echo "Chrome instalado: $(google-chrome --version)"
+          # NOTA: No instalamos chromedriver manualmente.
+          # Selenium 4.6+ incluye selenium-manager que descargará
+          # automáticamente la versión exacta de chromedriver que coincida.
 
 
       # ── 5. Dependencias Python ───────────────────────────
